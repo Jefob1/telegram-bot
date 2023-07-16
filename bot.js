@@ -1,23 +1,18 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const expressApp = express();
-const twilio = require("twilio");
+const accountSid = "AC8785d4cc3ad53df76ba03b24207330c4";
+const authToken = "2ff95c0dd45485b4f08f4e5d1e3f8289";
+const twilio = require("twilio")(accountSid, authToken);
 const axios = require("axios");
 const paystack = require("paystack")(process.env.stackSecretKey);
 const paystackCallbackUrl =
   "https://telegram-bot-kappa-rouge.vercel.app/api/callback";
-const path = require("path");
-const port = process.env.PORT || 3000;
-const twilioClient = twilio(
-  process.env.twiiioAccountSid,
-  process.env.twilioAuthToken
-);
 expressApp.use(express.static("static"));
 expressApp.use(bodyParser.json());
+const port = 3000;
 require("dotenv").config();
-
 const {Telegraf, Markup, session} = require("telegraf");
-const {log} = require("console");
 
 const bot = new Telegraf(process.env.botToken);
 bot.use(session());
@@ -35,12 +30,7 @@ const products = [
     price: 1000,
     description: "The more the merrier",
   },
-  {
-    id: 3,
-    name: "Stash Small",
-    price: 500,
-    description: "Going solo?",
-  },
+  {id: 3, name: "Stash Small", price: 500, description: "Going solo?"},
 ];
 
 const commands = [
@@ -87,19 +77,38 @@ bot.on("text", (ctx) => {
   ctx.session = ctx.session || {};
   ctx.session.cart = ctx.session.cart || [];
   const selectedProduct = ctx.session.selectedProduct;
+  const orderDetails = ctx.session.orderDetails;
 
   if (selectedProduct) {
     const quantity = parseInt(messageText);
     if (!isNaN(quantity) && quantity > 0) {
-      const productWithQuantity = {
-        product: selectedProduct,
-        quantity: quantity,
-      };
+      const productWithQuantity = {product: selectedProduct, quantity};
       ctx.session.cart.push(productWithQuantity);
       ctx.reply(`${quantity} ${selectedProduct.name}(s) added to ${"/cart"}.`);
       ctx.session.selectedProduct = null;
     } else {
       ctx.reply("How many (in digits)? Please try again.");
+    }
+  } else if (orderDetails) {
+    const inputFields = ["email", "phone", "address"];
+    const fieldName = inputFields.find((field) => !orderDetails[field]);
+    if (fieldName) {
+      const userInput = messageText.trim();
+      if (fieldName === "email" && !validateEmail(userInput)) {
+        ctx.reply("Please enter a valid email address.");
+      } else if (fieldName === "phone" && !validatePhoneNumber(userInput)) {
+        ctx.reply("Please enter a valid phone number.");
+      } else if (fieldName === "address" && userInput.length === 0) {
+        ctx.reply("Invalid address. Please enter a valid address.");
+      } else {
+        orderDetails[fieldName] = userInput;
+        if (fieldName === "address") {
+          processPayment(ctx, orderDetails);
+          ctx.reply("Payment processing...");
+        } else {
+          ctx.reply(`Please confirm your ${fieldName}:`);
+        }
+      }
     }
   } else {
     switch (messageText) {
@@ -124,7 +133,6 @@ bot.on("text", (ctx) => {
 
 function removeCommand(ctx) {
   const cart = ctx.session.cart;
-
   if (cart.length > 0) {
     const keyboard = Markup.inlineKeyboard(
       cart.map((productWithQuantity, index) => [
@@ -151,7 +159,6 @@ bot.action(/^removeProduct_(\d+)$/, (ctx) => {
 
 function cartCommand(ctx) {
   const cart = ctx.session.cart;
-
   if (cart.length > 0) {
     const message = cart
       .map(
@@ -165,15 +172,17 @@ function cartCommand(ctx) {
   }
 }
 
-function checkoutCommand(ctx) {
+async function checkoutCommand(ctx) {
   const cart = ctx.session.cart;
+  const orderDetails = ctx.session.orderDetails;
 
   if (cart.length > 0) {
-    const totalPrice = cart.reduce((total, productWithQuantity) => {
-      const productPrice =
-        productWithQuantity.product.price * productWithQuantity.quantity;
-      return total + productPrice;
-    }, 0);
+    const totalPrice = cart.reduce(
+      (total, productWithQuantity) =>
+        total +
+        productWithQuantity.product.price * productWithQuantity.quantity,
+      0
+    );
     const message = cart
       .map(
         (productWithQuantity) =>
@@ -186,10 +195,7 @@ function checkoutCommand(ctx) {
       .join("\n");
     const totalPriceMessage = `\nTotal Price: N${totalPrice.toFixed(2)}`;
 
-    ctx.session.orderDetails = {
-      products: cart,
-      totalPrice: totalPrice,
-    };
+    ctx.session.orderDetails = {products: cart, totalPrice};
 
     ctx.reply(`Selected Products:\n${message}${totalPriceMessage}.`);
     ctx.reply("Please enter your email address:");
@@ -197,44 +203,6 @@ function checkoutCommand(ctx) {
     ctx.reply("Your cart is empty. Select products first.");
   }
 }
-
-bot.on("text", async (ctx) => {
-  const messageText = ctx.message.text;
-  const orderDetails = ctx.session.orderDetails;
-
-  if (orderDetails) {
-    if (!orderDetails.paystackAccessCode) {
-      if (!orderDetails.email) {
-        const email = messageText.trim();
-        if (validateEmail(email)) {
-          orderDetails.email = email;
-          ctx.reply("Please enter your phone number:");
-        } else {
-          ctx.reply("Please enter a valid email address.");
-        }
-      } else if (!orderDetails.phone) {
-        const phone = messageText.trim();
-        if (validatePhoneNumber(phone)) {
-          orderDetails.phone = phone;
-          ctx.reply("Please enter your address:");
-        } else {
-          ctx.reply("Please enter a valid phone number.");
-        }
-      } else if (!orderDetails.address) {
-        const address = messageText.trim();
-        if (address.length > 0) {
-          orderDetails.address = address;
-          await processPayment(orderDetails);
-          ctx.reply("Payment processing...");
-        } else {
-          ctx.reply("Invalid address. Please eter a valid address.");
-        }
-      }
-    } else {
-      ctx.reply("Please hold on.");
-    }
-  }
-});
 
 function validateEmail(email) {
   const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -246,7 +214,7 @@ function validatePhoneNumber(phone) {
   return phonePattern.test(phone);
 }
 
-async function processPayment(orderDetails) {
+async function processPayment(ctx, orderDetails) {
   const paystackSecretKey = process.env.stackSecretKey;
   const email = orderDetails.email;
   const amount = orderDetails.totalPrice * 100;
@@ -254,11 +222,7 @@ async function processPayment(orderDetails) {
   try {
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
-      {
-        email,
-        amount,
-        callback_url: paystackCallbackUrl,
-      },
+      {email, amount, callback_url: paystackCallbackUrl},
       {
         headers: {
           Authorization: `Bearer ${paystackSecretKey}`,
@@ -273,75 +237,9 @@ async function processPayment(orderDetails) {
     );
   } catch (error) {
     console.error("Paystack API error:", error.message);
-    ctx.reply("An error occured while processing payment. Please try again.");
+    ctx.reply("An error occurred while processing payment. Please try again.");
   }
 }
-
-async function sendOrderDetailsToWhatApp(orderDetails) {
-  try {
-    const message = `
-    Order Details:
-    ------------------
-    Products: ${orderDetails.product
-      .map((process) => `${product.quantity}x ${product.product.name}`)
-      .join("\n")}
-    Total Price: N${orderDetails.totalPrice.toFixed(2)}
-    Email: ${orderDetails.email}
-    Phone: ${orderDetails.phone}
-    Address: ${orderDetails.address}
-    `;
-    await twilioClient.messages.create({
-      body: message,
-      from: "whatsapp:+15738892148",
-      to: "whatsapp:+2349150697972",
-    });
-    console.log("Order details sent to WhatsApp successfully.");
-  } catch (error) {
-    console.error("Error sending order details to WhatsApp:", error);
-  }
-}
-
-expressApp.post("/paystack/callback", async (req, res) => {
-  try {
-    const {event, data} = req.body;
-    switch (event) {
-      case "charge.success":
-        const {reference: chargeSuccessReference, amount: chargeSuccessAmount} =
-          data;
-        console.log(
-          "Payment sucessful:",
-          chargeSuccessReference,
-          chargeSuccessAmount
-        );
-        ctx.reply("Payment Successful!");
-        sendOrderDetailsToWhatApp(orderDetails);
-        break;
-      case "charge.failed":
-        const {reference: chargeFailedReference} = data;
-        console.log("Payment failed:", chargeFailedReference);
-        ctx.reply("Payment failed. Please try again.");
-        break;
-      case "transfer.success":
-        const {
-          transfer_code: transferSuccessCode,
-          amount: transferSuccessAmount,
-        } = data;
-        console.log(
-          "Transfer successful:",
-          transferSuccessCode,
-          transferSuccessAmount
-        );
-        ctx.reply("Transfer Successful!");
-        break;
-      default:
-        console.log("Unhandle event:", event);
-        break;
-    }
-  } catch (error) {
-    console.error("Callback handler error:", error.message);
-    res.sendStatus(500);
-  }
-});
 
 function helpCommand(ctx) {
   const keyboard = Markup.inlineKeyboard(
@@ -360,7 +258,8 @@ bot.action(/^showCommand_(\S+)$/, (ctx) => {
   }
 });
 
-expressApp.listen(port, () => {
-  console.log(`Server is ruuning on ${port}`);
+expressApp.listen(process.env.PORT || 3000, () => {
+  console.log(`Server is running on ${port}`);
 });
+
 bot.launch();
