@@ -1,15 +1,23 @@
 const express = require("express");
+const bodyParser = require("body-parser");
 const expressApp = express();
+const twilio = require("twilio");
 const axios = require("axios");
 const paystack = require("paystack")(process.env.stackSecretKey);
-const paystackCallbackUrl = "";
+const paystackCallbackUrl =
+  "https://telegram-bot-kappa-rouge.vercel.app/api/callback";
 const path = require("path");
 const port = process.env.PORT || 3000;
+const twilioClient = twilio(
+  process.env.twiiioAccountSid,
+  process.env.twilioAuthToken
+);
 expressApp.use(express.static("static"));
-expressApp.use(express.json());
+expressApp.use(bodyParser.json());
 require("dotenv").config();
 
 const {Telegraf, Markup, session} = require("telegraf");
+const {log} = require("console");
 
 const bot = new Telegraf(process.env.botToken);
 bot.use(session());
@@ -216,14 +224,14 @@ bot.on("text", async (ctx) => {
         const address = messageText.trim();
         if (address.length > 0) {
           orderDetails.address = address;
-         await processPayment(orderDetails);
+          await processPayment(orderDetails);
           ctx.reply("Payment processing...");
         } else {
           ctx.reply("Invalid address. Please eter a valid address.");
         }
       }
     } else {
-      
+      ctx.reply("Please hold on.");
     }
   }
 });
@@ -245,29 +253,95 @@ async function processPayment(orderDetails) {
 
   try {
     const response = await axios.post(
-      'https://api.paystack.co/transaction/initialize',
+      "https://api.paystack.co/transaction/initialize",
       {
         email,
         amount,
         callback_url: paystackCallbackUrl,
       },
-    {
-      headers: {
-        Authorization: `Bearer ${paystackSecretKey}`,
-        'Content-type': 'application/json',
-      },
-    }
+      {
+        headers: {
+          Authorization: `Bearer ${paystackSecretKey}`,
+          "Content-type": "application/json",
+        },
+      }
     );
     const {authorization_url, access_code} = response.data.data;
     orderDetails.paystackAccessCode = access_code;
-    ctx.reply('Please complete the payment by clicking this link: ' + authorization_url);
+    ctx.reply(
+      "Please complete the payment by clicking this link: " + authorization_url
+    );
   } catch (error) {
-    console.error('Paystack API error:', error.message);
-    ctx.reply('An error occured while processing payment. Please try again.');
+    console.error("Paystack API error:", error.message);
+    ctx.reply("An error occured while processing payment. Please try again.");
   }
 }
 
+async function sendOrderDetailsToWhatApp(orderDetails) {
+  try {
+    const message = `
+    Order Details:
+    ------------------
+    Products: ${orderDetails.product
+      .map((process) => `${product.quantity}x ${product.product.name}`)
+      .join("\n")}
+    Total Price: N${orderDetails.totalPrice.toFixed(2)}
+    Email: ${orderDetails.email}
+    Phone: ${orderDetails.phone}
+    Address: ${orderDetails.address}
+    `;
+    await twilioClient.messages.create({
+      body: message,
+      from: "whatsapp:+15738892148",
+      to: "whatsapp:+2349150697972",
+    });
+    console.log("Order details sent to WhatsApp successfully.");
+  } catch (error) {
+    console.error("Error sending order details to WhatsApp:", error);
+  }
+}
 
+expressApp.post("/paystack/callback", async (req, res) => {
+  try {
+    const {event, data} = req.body;
+    switch (event) {
+      case "charge.success":
+        const {reference: chargeSuccessReference, amount: chargeSuccessAmount} =
+          data;
+        console.log(
+          "Payment sucessful:",
+          chargeSuccessReference,
+          chargeSuccessAmount
+        );
+        ctx.reply("Payment Successful!");
+        sendOrderDetailsToWhatApp(orderDetails);
+        break;
+      case "charge.failed":
+        const {reference: chargeFailedReference} = data;
+        console.log("Payment failed:", chargeFailedReference);
+        ctx.reply("Payment failed. Please try again.");
+        break;
+      case "transfer.success":
+        const {
+          transfer_code: transferSuccessCode,
+          amount: transferSuccessAmount,
+        } = data;
+        console.log(
+          "Transfer successful:",
+          transferSuccessCode,
+          transferSuccessAmount
+        );
+        ctx.reply("Transfer Successful!");
+        break;
+      default:
+        console.log("Unhandle event:", event);
+        break;
+    }
+  } catch (error) {
+    console.error("Callback handler error:", error.message);
+    res.sendStatus(500);
+  }
+});
 
 function helpCommand(ctx) {
   const keyboard = Markup.inlineKeyboard(
@@ -286,4 +360,7 @@ bot.action(/^showCommand_(\S+)$/, (ctx) => {
   }
 });
 
+expressApp.listen(port, () => {
+  console.log(`Server is ruuning on ${port}`);
+});
 bot.launch();
