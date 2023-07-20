@@ -274,7 +274,7 @@ expressApp.get("/paystack-callback", async (req, res) => {
     if (orderDetails.totalPrice !== amountPaid) {
       return res
         .send(400)
-        .send("Payment amount does not match. PLease contact support.");
+        .send("Payment amount does not match. Please contact support.");
     }
 
     await sendOrderDetailsViaWhatsApp(orderDetails);
@@ -323,7 +323,7 @@ expressApp.post("/paystack-callback", async (req, res) => {
   }
 });
 
-async function sendOrderDetailsViaWhatsApp(orderDetails) {
+async function sendOrderDetailsViaWhatsApp(orderDetails, res) {
   const cart = orderDetails.products;
   const totalPrice = orderDetails.totalPrice.toFixed(2);
 
@@ -347,8 +347,12 @@ async function sendOrderDetailsViaWhatsApp(orderDetails) {
       to: "whatsapp:+2349150697972",
     });
     console.log("Order details sent via WhatsApp.");
+    res.send(200);
   } catch (error) {
     console.error("Error sending details via WhatsApp:", error);
+    res
+      .status(500)
+      .send("An error occurred while sending order details to WhatsApp.");
   }
 }
 
