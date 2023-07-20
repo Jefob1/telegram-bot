@@ -265,24 +265,33 @@ expressApp.get("/paystack-callback", async (req, res) => {
     const orderStatus = data.status;
     const orderDetails = req.session.orderDetails;
 
-    if (orderDetails && orderStatus === "success") {
-      if (orderDetails.totalPrice === amountPaid) {
-        await sendOrderDetailsViaWhatsApp(orderDetails);
-        req.session.orderDetails = null;
-        res.send(`Payment of N${amountPaid.toFixed(2)} was successful.`);
-      } else {
-        ctx.reply("Payment amount does not match. Please contact support.");
-      }
-    } else {
-      ctx.reply("Payment failed. Please try again.");
+    if (!orderDetails) {
+      return res.status(400).send("Order details not found.");
     }
-    return res.send("Payment successful!");
+    if (orderStatus !== "success") {
+      return res.status(400).send("Payment failed. Please try again.");
+    }
+    if (orderDetails.totalPrice !== amountPaid) {
+      return res
+        .send(400)
+        .send("Payment amount does not match. PLease contact support.");
+    }
+
+    await sendOrderDetailsViaWhatsApp(orderDetails);
+    req.session.orderDetails = null;
+    console.log(`Payment of N${amountPaid.toFixed(2)} was successful.`);
+    return res.sendStatus(200);
   } catch (error) {
     console.error("Paystack verification error:", error.message);
-    //to do: more error handling
-    return res
-      .status(500)
-      .send("An error occurred while verifying payment:", error.message);
+
+    if (error.response && error.response.status === 404) {
+      return res.status(404).send("Payment reference not found.");
+    }
+    if (error.response && error.response.data) {
+      const errorMessage = error.response.data.message;
+      return res.status(500).send(`Error verifying payment: ${errorMessage}`);
+    }
+    return res.status(500).send("An error occurred while verifying payment.");
   }
 });
 
@@ -292,18 +301,26 @@ expressApp.post("/paystack-callback", async (req, res) => {
   const orderStatus = data.status;
   const orderDetails = req.session.orderDetails;
 
-  if (orderDetails && orderStatus === "success") {
-    if (orderDetails.totalPrice === amountPaid) {
-      await sendOrderDetailsViaWhatsApp(orderDetails);
-      req.session.orderDetails = null;
-      console.log(`Payment of N${amountPaid.toFixed(2)} was successful.`);
-    } else {
-      ctx.reply("Payment amount does not match. Please contact support.");
-    }
-  } else {
-    ctx.reply("Payment failed. Please try again.");
+  if (!orderDetails) {
+    return res.status(400).send("Order details not found");
   }
-  res.sendStatus(200);
+  if (orderStatus !== "success") {
+    return res.status(400).send("Payment failed. Please try again.");
+  }
+  if (orderDetails.totalPrice !== amountPaid) {
+    return res
+      .status(400)
+      .send("Payment amount does not match. PLease contact support.");
+  }
+  try {
+    await sendOrderDetailsViaWhatsApp(orderDetails);
+    req.session.orderDetails = null;
+    console.log(`Pyment of N${amountPaid.toFixed(2)} was successful.`);
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error("Error sending order details via WhatApp:", error);
+    res.send(500).send("An error occurred while processing the payment.");
+  }
 });
 
 async function sendOrderDetailsViaWhatsApp(orderDetails) {
