@@ -14,9 +14,8 @@ const port = 3000;
 require("dotenv").config();
 const {Telegraf, Markup, session} = require("telegraf");
 
-const webhookUrl = "https://telegram-bot-kappa-rouge.vercel.app";
-
 const bot = new Telegraf(process.env.botToken);
+const webhookUrl = "https://stash-telegram-bot.onrender.com";
 bot.telegram.setWebhook(`${webhookUrl}/secret-path`);
 expressApp.use(bot.webhookCallback("/secret-path"));
 
@@ -77,9 +76,7 @@ bot.action(/^selectProduct_(\d+)$/, (ctx) => {
   }
 });
 
-expressApp.post("/secret-path", (req, res) => {
-  bot.handleUpdate(req.body);
-  res.status(200).end();
+bot.on("text", (ctx) => {
   const messageText = ctx.message.text;
   ctx.session = ctx.session || {};
   ctx.session.cart = ctx.session.cart || [];
