@@ -3,11 +3,11 @@ const bodyParser = require("body-parser");
 const expressApp = express();
 const accountSid = "AC8785d4cc3ad53df76ba03b24207330c4";
 const authToken = "2ff95c0dd45485b4f08f4e5d1e3f8289";
-const twilio = require("twilio")(accountSid, authToken);
+const twilioClient = require("twilio")(accountSid, authToken);
 const axios = require("axios");
 const paystack = require("paystack")(process.env.stackSecretKey);
 const paystackCallbackUrl =
-  "https://telegram-bot-kappa-rouge.vercel.app/api/callback";
+  "https://stash-telegram-bot.onrender.com/paystack-callback";
 expressApp.use(express.static("static"));
 expressApp.use(bodyParser.json());
 const port = 3000;
@@ -242,6 +242,56 @@ async function processPayment(ctx, orderDetails) {
   } catch (error) {
     console.error("Paystack API error:", error.message);
     ctx.reply("An error occurred while processing payment. Please try again.");
+  }
+}
+
+expressApp.post("/paystack-callback", async (req, res) => {
+  const {data} = req.body;
+  const amountPaid = data.amount / 100;
+  const orderStatus = data.status;
+  const orderDetails = req.session.orderDetails;
+
+  if (orderDetails && orderStatus === "success") {
+    if (orderDetails.totalPrice === amountPaid) {
+      await sendOrderDetailsViaWhatsApp(orderDetails);
+      req.session.orderDetails = null;
+      ctx.reply(`Payment of N${amountPaid.toFixed(2)} was successful.`);
+    } else {
+      ctx.reply("Payment amount does not match. Please contact support.");
+    }
+  } else {
+    ctx.reply("Payment failed. Please try again.");
+  }
+  res.sendStatus(200);
+});
+
+async function sendOrderDetailsViaWhatsApp(orderDetails) {
+  const cart = orderDetails.products;
+  const totalPrice = orderDetails.totalPrice.toFixed(2);
+
+  const orderMessage = cart
+    .map(
+      (productWithQuantity) =>
+        `${productWithQuantity.product.name} - Qty: ${
+          productWithQuantity.quantity
+        } - N${(
+          productWithQuantity.product.price * productWithQuantity.quantity
+        ).toFixed(2)}`
+    )
+    .join("\n");
+  const totalPriceMessage = `\nTotal Price: N${totalPrice}`;
+  const message = `Order Details:\n${orderMessage}${totalPriceMessage}`;
+
+  try {
+    await twilioClient.messages.create({
+      body: message,
+      from: "whatsapp:+14155238886",
+      to: "whatsapp:+2349150697972",
+    });
+    console.log("Order details sent via WhatsApp.");
+    ctx.reply("Your order has been received and is being processed.");
+  } catch (error) {
+    console.error("Error sending details via WhatsApp:", error);
   }
 }
 
