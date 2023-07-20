@@ -179,7 +179,6 @@ function cartCommand(ctx) {
 async function checkoutCommand(ctx) {
   const cart = ctx.session.cart;
   const orderDetails = ctx.session.orderDetails;
-  processPayment(ctx, orderDetails);
 
   if (cart.length > 0) {
     const totalPrice = cart.reduce(
