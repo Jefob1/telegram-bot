@@ -179,6 +179,7 @@ function cartCommand(ctx) {
 async function checkoutCommand(ctx) {
   const cart = ctx.session.cart;
   const orderDetails = ctx.session.orderDetails;
+  processPayment(ctx, orderDetails);
 
   if (cart.length > 0) {
     const totalPrice = cart.reduce(
@@ -245,6 +246,47 @@ async function processPayment(ctx, orderDetails) {
   }
 }
 
+expressApp.get("/paystack-callback", async (req, res) => {
+  const {reference} = req.query;
+
+  if (!reference) {
+    return res.status(400).send("Invalid request. Missing reference.");
+  }
+  try {
+    const response = await axios.get(
+      `https://api.paystack.co/transaction/verify/${reference}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.stackSecretKey}`,
+        },
+      }
+    );
+    const {data} = response.data;
+    const amountPaid = data.amount / 100;
+    const orderStatus = data.status;
+    const orderDetails = req.session.orderDetails;
+
+    if (orderDetails && orderStatus === "success") {
+      if (orderDetails.totalPrice === amountPaid) {
+        await sendOrderDetailsViaWhatsApp(orderDetails);
+        req.session.orderDetails = null;
+        res.send(`Payment of N${amountPaid.toFixed(2)} was successful.`);
+      } else {
+        ctx.reply("Payment amount does not match. Please contact support.");
+      }
+    } else {
+      ctx.reply("Payment failed. Please try again.");
+    }
+    return res.send("Payment successful!");
+  } catch (error) {
+    console.error("Paystack verification error:", error.message);
+    //to do: more error handling
+    return res
+      .status(500)
+      .send("An error occurred while verifying payment:", error.message);
+  }
+});
+
 expressApp.post("/paystack-callback", async (req, res) => {
   const {data} = req.body;
   const amountPaid = data.amount / 100;
@@ -255,7 +297,7 @@ expressApp.post("/paystack-callback", async (req, res) => {
     if (orderDetails.totalPrice === amountPaid) {
       await sendOrderDetailsViaWhatsApp(orderDetails);
       req.session.orderDetails = null;
-      ctx.reply(`Payment of N${amountPaid.toFixed(2)} was successful.`);
+      console.log(`Payment of N${amountPaid.toFixed(2)} was successful.`);
     } else {
       ctx.reply("Payment amount does not match. Please contact support.");
     }
@@ -289,7 +331,6 @@ async function sendOrderDetailsViaWhatsApp(orderDetails) {
       to: "whatsapp:+2349150697972",
     });
     console.log("Order details sent via WhatsApp.");
-    ctx.reply("Your order has been received and is being processed.");
   } catch (error) {
     console.error("Error sending details via WhatsApp:", error);
   }
