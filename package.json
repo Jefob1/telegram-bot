@@ -4,7 +4,8 @@
   "description": "Stah Telegram Bot",
   "main": "bot.js",
   "scripts": {
-    "test": "start"
+    "test": "start",
+    "start": "node bot.js"
   },
   "repository": {
     "type": "git",

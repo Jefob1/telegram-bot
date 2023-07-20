@@ -14,23 +14,28 @@ const port = 3000;
 require("dotenv").config();
 const {Telegraf, Markup, session} = require("telegraf");
 
+const webhookUrl = "https://telegram-bot-kappa-rouge.vercel.app";
+
 const bot = new Telegraf(process.env.botToken);
+bot.telegram.setWebhook(`${webhookUrl}/secret-path`);
+expressApp.use(bot.webhookCallback("/secret-path"));
+
 bot.use(session());
 
 const products = [
   {
     id: 1,
     name: "Stash Bag",
-    price: 10000,
+    price: 5000,
     description: "This will keep you away from us for awhile",
   },
   {
     id: 2,
     name: "Stash Large",
-    price: 1000,
+    price: 3000,
     description: "The more the merrier",
   },
-  {id: 3, name: "Stash Small", price: 500, description: "Going solo?"},
+  {id: 3, name: "Stash Small", price: 1000, description: "Going solo?"},
 ];
 
 const commands = [
@@ -72,7 +77,9 @@ bot.action(/^selectProduct_(\d+)$/, (ctx) => {
   }
 });
 
-bot.on("text", (ctx) => {
+expressApp.post("/secret-path", (req, res) => {
+  bot.handleUpdate(req.body);
+  res.status(200).end();
   const messageText = ctx.message.text;
   ctx.session = ctx.session || {};
   ctx.session.cart = ctx.session.cart || [];
@@ -261,5 +268,3 @@ bot.action(/^showCommand_(\S+)$/, (ctx) => {
 expressApp.listen(process.env.PORT || 3000, () => {
   console.log(`Server is running on ${port}`);
 });
-
-bot.launch();
