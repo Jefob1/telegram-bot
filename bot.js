@@ -110,7 +110,7 @@ bot.on("text", (ctx) => {
           processPayment(ctx, orderDetails);
           ctx.reply("Payment processing...");
         } else {
-          ctx.reply(`Please confirm your ${fieldName}:`);
+          //ctx.reply(`Please confirm your ${fieldName}:`);
         }
       }
     }
@@ -178,7 +178,7 @@ function cartCommand(ctx) {
 
 async function checkoutCommand(ctx) {
   const cart = ctx.session.cart;
-  const orderDetails = ctx.session.orderDetails;
+  const orderDetails = ctx.session.orderDetails || {};
 
   if (cart.length > 0) {
     const totalPrice = cart.reduce(
@@ -198,8 +198,10 @@ async function checkoutCommand(ctx) {
       )
       .join("\n");
     const totalPriceMessage = `\nTotal Price: N${totalPrice.toFixed(2)}`;
+    orderDetails.products = cart;
+    orderDetails.totalPrice = totalPrice;
 
-    ctx.session.orderDetails = {products: cart, totalPrice};
+    ctx.session.orderDetails = orderDetails;
 
     ctx.reply(`Selected Products:\n${message}${totalPriceMessage}.`);
     ctx.reply("Please enter your email address:");
@@ -214,7 +216,7 @@ function validateEmail(email) {
 }
 
 function validatePhoneNumber(phone) {
-  const phonePattern = /^\d{10}$/;
+  const phonePattern = /^\d{11}$/;
   return phonePattern.test(phone);
 }
 
@@ -295,6 +297,33 @@ expressApp.get("/paystack-callback", async (req, res) => {
   }
 });
 
+expressApp.get("/payment-success", (req, res) => {
+  const botLink = "https://t.me/stashng_bot";
+  res.send(
+    `Payment successful! Click on this link to return to the Bot: <a href="${botLink}">Continue to Telegram Bot</a>`
+  );
+});
+
+expressApp.get("/payment-verification-failure", async (req, res) => {
+  const orderDetails = req.session.orderDetails;
+
+  if (!orderDetails) {
+    return res.status(400).send("Order details not found");
+  }
+  try {
+    await sendOrderDetailsViaWhatsApp(orderDetails, res);
+    req.session.orderDetails = null;
+    res.send(
+      "Payment was successful, but we encountered an issue while verifying it. However, your order details have been received."
+    );
+  } catch (error) {
+    console.error("Error sending order details via WhatsApp:", error);
+    res
+      .status(500)
+      .send("An error occurred while sending order details to WhatsApp.");
+  }
+});
+
 expressApp.post("/paystack-callback", async (req, res) => {
   const {data} = req.body;
   const amountPaid = data.amount / 100;
@@ -305,7 +334,7 @@ expressApp.post("/paystack-callback", async (req, res) => {
     return res.status(400).send("Order details not found");
   }
   if (orderStatus !== "success") {
-    return res.status(400).send("Payment failed. Please try again.");
+    return res.redirect("/payment-verification-failure");
   }
   if (orderDetails.totalPrice !== amountPaid) {
     return res
@@ -316,10 +345,10 @@ expressApp.post("/paystack-callback", async (req, res) => {
     await sendOrderDetailsViaWhatsApp(orderDetails);
     req.session.orderDetails = null;
     console.log(`Pyment of N${amountPaid.toFixed(2)} was successful.`);
-    return res.sendStatus(200);
+    return res.redirect("/payment-success");
   } catch (error) {
-    console.error("Error sending order details via WhatApp:", error);
-    res.send(500).send("An error occurred while processing the payment.");
+    console.error("Paysack verification error:", error.message);
+    res.redirect("/payment-verification-error");
   }
 });
 
