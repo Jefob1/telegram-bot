@@ -110,7 +110,7 @@ bot.on("text", (ctx) => {
           processPayment(ctx, orderDetails);
           ctx.reply("Payment processing...");
         } else {
-          //ctx.reply(`Please confirm your ${fieldName}:`);
+          ctx.reply(`Please confirm your ${fieldName}:`);
         }
       }
     }
